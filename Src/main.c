@@ -23,7 +23,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "arm_math.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -33,7 +33,9 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define VOLT_DIV_FACTOR		0.0490 		// assuming R1 = 16.4k and R2 = 1k
+#define CURR_DIV_FACTOR 	0.5*0.35	// CSA gain is 0.5V/A
+#define N					500			// moving avg approx uses 500 past samples
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -56,11 +58,18 @@ UART_HandleTypeDef huart1;
     float celcius_tempsense=0;
     float fan_duty=0;
 
-    float raw_Vsense_value = 0;
-    float raw_Isense_value = 0;
-    float Voltage = 0;
-    float Current = 0;
-
+    //brad's buck converter variables
+    float pwm_val = 0;			//PWM value for duty cycle adjustment to gate driver
+    float v_sense = 0;			//buck output voltage sense
+    float i_sense = 0;			//buck output current sense
+    float rload = 0;            //buck calculated load from v_sense & i_sense
+    float pid_error = 0;		//difference from target v or i and sensed v or i
+    int user_en = 1;            //output enable flag
+    float i_lim = 0.020;        //user selected current limit @elliott
+    float v_lim = 5;            //user selected voltage limit @elliott
+    float v_sense_avg = 0;		//moving average val of v_sense
+    float i_sense_avg = 0;		//moving average val of i_sense
+    int cv_cc = 1;				//constant voltage = 1, constant current = 0 (modes of operation)
 
 
 /* USER CODE END PV */
@@ -73,8 +82,13 @@ static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
-
-
+static float approxMovingAvg(float avg, float new_sample);
+void VsenseADC(void);
+void IsenseADC(void);
+void TempSenseADC(void);
+void FanPWM(void);
+int getMode(void);
+void PIDsetBuckPWM(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -91,6 +105,16 @@ static void MX_USART1_UART_Init(void);
 int main(void)
 {
   /* USER CODE BEGIN 1 */
+	int raw_voltage = 0;            //12b value from adc for vsense
+	int raw_current = 0;            //12b value from adc for isense
+	float voltage = 0;              //0-3V conversion for voltage
+	float current = 0;              //0-3V conversion for current
+	float percent_voltage = 0;      //%V from 0-3
+	float percent_current = 0;      //%I signal from 0-3V
+
+	float PID_Kp = 300;             //proportional gain
+	float PID_Ki = 0.001;           //integral gain
+	float PID_Kd = -5;              //derivative gain
 
   /* USER CODE END 1 */
   
@@ -101,9 +125,13 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+  arm_pid_instance_f32 PID;	//ARM PID instance float 32b
 
+  PID.Kp = PID_Kp;
+  PID.Ki = PID_Ki;
+  PID.Kd = PID_Kd;
 
-
+  arm_pid_init_f32(&PID, 1);
 
   /* USER CODE END Init */
 
@@ -134,7 +162,14 @@ int main(void)
 
 
    VsenseADC();
+   v_sense_avg = approxMovingAvg(v_sense_avg, v_sense);
+
    IsenseADC();
+   i_sense_avg = approxMovingAvg(i_sense_avg, i_sense);
+
+   cv_cc = getMode();	//1 = Const V, 0 = Const C mode
+   PIDsetBuckPWM();		//set new PWM for buck using PID loop
+
    TempSenseADC();
    FanPWM();
 
@@ -277,9 +312,9 @@ static void MX_TIM1_Init(void)
 
   /* USER CODE END TIM1_Init 1 */
   htim1.Instance = TIM1;
-  htim1.Init.Prescaler = 25-1;
+  htim1.Init.Prescaler = 1-1;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 200-1;
+  htim1.Init.Period = 48-1;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -303,7 +338,7 @@ static void MX_TIM1_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
+  sConfigOC.Pulse = 6;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
@@ -488,26 +523,35 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void VsenseADC (void){
 
+    int raw_voltage = 0;            //12b value from adc for vsense
+	float voltage = 0;              //0-3V conversion for voltage
+	float percent_voltage = 0;      //%V from 0-3
+
     HAL_ADC_Start(&hadc);
     HAL_ADC_PollForConversion(&hadc,10);
-    raw_Vsense_value = HAL_ADC_GetValue(&hadc);
 
+    raw_voltage = HAL_ADC_GetValue(&hadc);
+    percent_voltage = ((float) raw_voltage) / 4092;
+    voltage = percent_voltage * 3;					//0-3V ADC signal
+    v_sense = voltage / VOLT_DIV_FACTOR;			//0-50V value
 
-
-    Voltage= ((raw_Vsense_value/4096.0)*3000);
-
-
+    return;
 }
 void IsenseADC (void){
 
+	int raw_current = 0;            //12b value from adc for isense
+	float current = 0;              //0-3V conversion for current
+	float percent_current = 0;      //%I signal from 0-3V
+
     HAL_ADC_Start(&hadc);
     HAL_ADC_PollForConversion(&hadc,10);
-    raw_Isense_value = HAL_ADC_GetValue(&hadc);
 
+    raw_current = HAL_ADC_GetValue(&hadc);
+    percent_current = ((float) raw_current) / 4092;
+    current = percent_current * 3;					//0-3V ADC signal
+    i_sense = current / CURR_DIV_FACTOR;			//0-3A value
 
-
-    Current= ((raw_Isense_value/4096.0)*3000);
-
+	return;
 }
 
 void TempSenseADC (void){
@@ -540,6 +584,54 @@ void FanPWM (void){
 
 }
 
+static float approxMovingAvg(float avg, float newsample)
+{
+	avg -= avg / N;
+	avg += newsample / N;
+
+	return avg;
+}
+
+int getMode(void){
+	int cvcc_flag = 0;
+
+	if(i_sense_avg >= i_lim) //cc mode
+		cvcc_flag = 0;
+	else if(v_sense_avg >= v_lim) //cv mode
+		cvcc_flag = 1;
+	else
+		cvcc_flag = 1;		//otherwise assume cv mode
+
+	// turn on top STM32F0disc LED for CV, bottom for CC mode for debug
+	if(cv_cc == 1){
+		HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(LD4_GPIO_Port, LD4_Pin, GPIO_PIN_SET);
+	}
+	else
+	{
+		HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_SET);
+		HAL_GPIO_WritePin(LD4_GPIO_Port, LD4_Pin, GPIO_PIN_RESET);
+	}
+
+	return cvcc_flag;
+}
+
+void setPIDBuckPWM(void){
+	if(cv_cc == 1)	//if in CV mode
+		pid_error = v_lim - v_sense_avg;
+	else			//in CC mode
+		pid_error = i_lim - i_sense_avg;
+
+	pwm_val = arm_pid_f32(&PID, pid_error);
+
+	if(pwm_val > 46)
+		pwm_val = 46;
+
+	if(pwm_val < 0)
+		pwm_val = 0;
+
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, pwm_val);
+}
 /* USER CODE END 4 */
 
 /**
