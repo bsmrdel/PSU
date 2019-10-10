@@ -492,7 +492,7 @@ void VsenseADC (void){
     HAL_ADC_PollForConversion(&hadc,10);
     raw_Vsense_value = HAL_ADC_GetValue(&hadc);
 
-    //HAL_ADC_Stop(&hadc);
+
 
     Voltage= ((raw_Vsense_value/4096.0)*3000);
 
@@ -504,7 +504,7 @@ void IsenseADC (void){
     HAL_ADC_PollForConversion(&hadc,10);
     raw_Isense_value = HAL_ADC_GetValue(&hadc);
 
-    //HAL_ADC_Stop(&hadc);
+
 
     Current= ((raw_Isense_value/4096.0)*3000);
 
