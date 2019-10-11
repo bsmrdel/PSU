@@ -105,12 +105,6 @@ void PIDsetBuckPWM(void);
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-	int raw_voltage = 0;            //12b value from adc for vsense
-	int raw_current = 0;            //12b value from adc for isense
-	float voltage = 0;              //0-3V conversion for voltage
-	float current = 0;              //0-3V conversion for current
-	float percent_voltage = 0;      //%V from 0-3
-	float percent_current = 0;      //%I signal from 0-3V
 
 	float PID_Kp = 300;             //proportional gain
 	float PID_Ki = 0.001;           //integral gain
