@@ -53,12 +53,14 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 
-    float raw_tempsense_value =0;
     float farh=0;
+    float raw_tempsense_value = 0;
     float celcius_tempsense=0;
     float fan_duty=0;
 
     //brad's buck converter variables
+    int raw_voltage = 0;            //12b value from adc for vsense
+    int raw_current = 0;            //12b value from adc for isense
     float pwm_val = 0;			//PWM value for duty cycle adjustment to gate driver
     float v_sense = 0;			//buck output voltage sense
     float i_sense = 0;			//buck output current sense
@@ -70,6 +72,10 @@ UART_HandleTypeDef huart1;
     float v_sense_avg = 0;		//moving average val of v_sense
     float i_sense_avg = 0;		//moving average val of i_sense
     int cv_cc = 1;				//constant voltage = 1, constant current = 0 (modes of operation)
+
+	float PID_Kp = 300;             //proportional gain
+	float PID_Ki = 0.001;           //integral gain
+	float PID_Kd = -5;              //derivative gain
 
 
 /* USER CODE END PV */
@@ -83,12 +89,13 @@ static void MX_TIM2_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
 static float approxMovingAvg(float avg, float new_sample);
-void VsenseADC(void);
-void IsenseADC(void);
-void TempSenseADC(void);
+void senseADC(void);
+void getV(void);
+void getI(void);
+void getTemp(void);
 void FanPWM(void);
 int getMode(void);
-void PIDsetBuckPWM(void);
+void PIDsetBuckPWM();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -106,9 +113,6 @@ int main(void)
 {
   /* USER CODE BEGIN 1 */
 
-	float PID_Kp = 300;             //proportional gain
-	float PID_Ki = 0.001;           //integral gain
-	float PID_Kd = -5;              //derivative gain
 
   /* USER CODE END 1 */
   
@@ -119,13 +123,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-  arm_pid_instance_f32 PID;	//ARM PID instance float 32b
 
-  PID.Kp = PID_Kp;
-  PID.Ki = PID_Ki;
-  PID.Kd = PID_Kd;
-
-  arm_pid_init_f32(&PID, 1);
 
   /* USER CODE END Init */
 
@@ -154,21 +152,19 @@ int main(void)
   while (1)
   {
 
-
-   VsenseADC();
-   v_sense_avg = approxMovingAvg(v_sense_avg, v_sense);
-
-   IsenseADC();
-   i_sense_avg = approxMovingAvg(i_sense_avg, i_sense);
+   senseADC();
+   getV();
+   getI();
+   rload = v_sense_avg / i_sense_avg;
 
    cv_cc = getMode();	//1 = Const V, 0 = Const C mode
    PIDsetBuckPWM();		//set new PWM for buck using PID loop
 
-   TempSenseADC();
-   FanPWM();
+   getTemp();
+   //FanPWM();
 
 
-
+   HAL_ADC_Stop(&hadc);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -515,56 +511,58 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void VsenseADC (void){
+void senseADC (void){
 
-    int raw_voltage = 0;            //12b value from adc for vsense
-	float voltage = 0;              //0-3V conversion for voltage
-	float percent_voltage = 0;      //%V from 0-3
+    HAL_ADC_Start(&hadc);                             //start ADC
+    HAL_ADC_PollForConversion(&hadc, 10);             //poll until complete
+    raw_voltage = HAL_ADC_GetValue(&hadc);            //collect raw voltage
 
-    HAL_ADC_Start(&hadc);
-    HAL_ADC_PollForConversion(&hadc,10);
+    HAL_ADC_Start(&hadc);                             //start ADC
+    HAL_ADC_PollForConversion(&hadc, 10);             //poll until complete
+    raw_current = HAL_ADC_GetValue(&hadc) -300;            //collect raw current
 
-    raw_voltage = HAL_ADC_GetValue(&hadc);
-    percent_voltage = ((float) raw_voltage) / 4092;
-    voltage = percent_voltage * 3;					//0-3V ADC signal
-    v_sense = voltage / VOLT_DIV_FACTOR;			//0-50V value
+    HAL_ADC_Start(&hadc);                             //start ADC
+	HAL_ADC_PollForConversion(&hadc, 10);             //poll until complete
+	raw_tempsense_value = HAL_ADC_GetValue(&hadc);    //collect raw tempval
+
+    HAL_ADC_Stop(&hadc);                              //stop ADC
 
     return;
 }
-void IsenseADC (void){
+void getV (void){
 
-	int raw_current = 0;            //12b value from adc for isense
-	float current = 0;              //0-3V conversion for current
-	float percent_current = 0;      //%I signal from 0-3V
+    float voltage = 0;              //0-3V conversion for voltage
+	float percent_voltage = 0;      //%V from 0-3
 
-    HAL_ADC_Start(&hadc);
-    HAL_ADC_PollForConversion(&hadc,10);
+    percent_voltage = ((float) raw_voltage) / 4092;
+    voltage = percent_voltage * 3;					//0-3V ADC signal
+    v_sense = voltage / VOLT_DIV_FACTOR;			//0-50V value
+    v_sense_avg = approxMovingAvg(v_sense_avg, v_sense);
 
-    raw_current = HAL_ADC_GetValue(&hadc);
+    return;
+}
+void getI (void){
+
+    float current = 0;              //0-3V conversion for voltage
+	float percent_current = 0;      //%V from 0-3
+
     percent_current = ((float) raw_current) / 4092;
     current = percent_current * 3;					//0-3V ADC signal
     i_sense = current / CURR_DIV_FACTOR;			//0-3A value
+    i_sense_avg = approxMovingAvg(i_sense_avg, i_sense);
 
-	return;
+    return;
 }
 
-void TempSenseADC (void){
+void getTemp (void){
 
-    HAL_ADC_Start(&hadc);
-    HAL_ADC_PollForConversion(&hadc,10);
-    raw_tempsense_value = HAL_ADC_GetValue(&hadc);
-
-    HAL_ADC_Stop(&hadc);
-
-    farh = ((raw_tempsense_value/4096.0)*3000)/10; //calculate the farhenight using 5V
-
+    farh = ((raw_tempsense_value/4096.0)*3000)/10; //calculate the farenheit using 5V
     celcius_tempsense = (farh - 32.0) * (0.5);
 
+    return;
 }
 
 void FanPWM (void){
-
-
 
     if(farh>90){
         fan_duty =95*2;
@@ -610,7 +608,16 @@ int getMode(void){
 	return cvcc_flag;
 }
 
-void setPIDBuckPWM(void){
+void PIDsetBuckPWM(void){
+	  arm_pid_instance_f32 PID;	//ARM PID instance float 32b
+
+	  PID.Kp = PID_Kp;
+	  PID.Ki = PID_Ki;
+	  PID.Kd = PID_Kd;
+
+	  arm_pid_init_f32(&PID, 1);
+
+
 	if(cv_cc == 1)	//if in CV mode
 		pid_error = v_lim - v_sense_avg;
 	else			//in CC mode
