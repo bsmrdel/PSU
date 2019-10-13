@@ -33,9 +33,12 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define VOLT_DIV_FACTOR		0.0490 		// assuming R1 = 16.4k and R2 = 1k
-#define CURR_DIV_FACTOR 	0.5*0.35	// CSA gain is 0.5V/A
-#define N					500			// moving avg approx uses 500 past samples
+#define VOLT_DIV_FACTOR		0.0445 		// assuming R1 = 16.4k and R2 = 1k
+#define CURR_DIV_FACTOR 	0.5	// CSA gain is 0.5V/A
+#define VOLT_OFFSET			0.2
+#define CURR_OFFSET			0.09
+#define CURR_REF			2.92		//reference voltage for CSA
+#define N					1000			// moving avg approx uses 500 past samples
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -548,8 +551,8 @@ void getI (void){
 	float percent_current = 0;      //%V from 0-3
 
     percent_current = ((float) raw_current) / 4092;
-    current = percent_current * 3;					//0-3V ADC signal
-    i_sense = current / CURR_DIV_FACTOR;			//0-3A value
+    current = CURR_REF - (percent_current * 3);					//0-3V ADC signal
+    i_sense = (current / CURR_DIV_FACTOR) + CURR_OFFSET;			//0-3A value
     i_sense_avg = approxMovingAvg(i_sense_avg, i_sense);
 
     return;
