@@ -52,11 +52,8 @@ TIM_HandleTypeDef htim2;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
-
+    int raw_tempsense_value = 0; //12b value from adc for TempSense
     float farh=0;
-    float raw_tempsense_value = 0;
-    float celcius_tempsense=0;
-    float fan_duty=0;
 
     //brad's buck converter variables
     int raw_voltage = 0;            //12b value from adc for vsense
@@ -161,7 +158,7 @@ int main(void)
    PIDsetBuckPWM();		//set new PWM for buck using PID loop
 
    getTemp();
-   //FanPWM();
+
 
 
    HAL_ADC_Stop(&hadc);
@@ -519,7 +516,7 @@ void senseADC (void){
 
     HAL_ADC_Start(&hadc);                             //start ADC
     HAL_ADC_PollForConversion(&hadc, 10);             //poll until complete
-    raw_current = HAL_ADC_GetValue(&hadc) -300;            //collect raw current
+    raw_current = HAL_ADC_GetValue(&hadc) ;            //collect raw current
 
     HAL_ADC_Start(&hadc);                             //start ADC
 	HAL_ADC_PollForConversion(&hadc, 10);             //poll until complete
@@ -557,12 +554,14 @@ void getI (void){
 void getTemp (void){
 
     farh = ((raw_tempsense_value/4096.0)*3000)/10; //calculate the farenheit using 5V
-    celcius_tempsense = (farh - 32.0) * (0.5);
+
 
     return;
 }
 
 void FanPWM (void){
+
+	float fan_duty=0;
 
     if(farh>90){
         fan_duty =95*2;
