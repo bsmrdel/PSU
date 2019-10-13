@@ -54,6 +54,7 @@ UART_HandleTypeDef huart1;
 /* USER CODE BEGIN PV */
     int raw_tempsense_value = 0; //12b value from adc for TempSense
     float farh=0;
+    float max_trans_current = 0;
 
     //brad's buck converter variables
     int raw_voltage = 0;            //12b value from adc for vsense
@@ -92,6 +93,7 @@ void getI(void);
 void getTemp(void);
 void FanPWM(void);
 int getMode(void);
+void max_trans(void);
 void PIDsetBuckPWM();
 /* USER CODE END PFP */
 
@@ -162,6 +164,8 @@ int main(void)
 
 
    HAL_ADC_Stop(&hadc);
+   max_trans();  //  Checks and displays max transient current when OE is pressed.
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -605,6 +609,12 @@ int getMode(void){
 	}
 
 	return cvcc_flag;
+}
+
+void max_trans(void){
+
+	//if()
+
 }
 
 void PIDsetBuckPWM(void){
