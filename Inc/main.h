@@ -64,10 +64,6 @@ void Error_Handler(void);
 #define Current_Decimal_ON_GPIO_Port GPIOC
 #define Current_Decimal_OFF_Pin GPIO_PIN_15
 #define Current_Decimal_OFF_GPIO_Port GPIOC
-#define Voltage_Encoder_A_Pin GPIO_PIN_0
-#define Voltage_Encoder_A_GPIO_Port GPIOF
-#define Voltage_Encoder_B_Pin GPIO_PIN_1
-#define Voltage_Encoder_B_GPIO_Port GPIOF
 #define Output_enable_LED_Pin GPIO_PIN_0
 #define Output_enable_LED_GPIO_Port GPIOC
 #define CC_LED_Pin GPIO_PIN_1
@@ -94,6 +90,10 @@ void Error_Handler(void);
 #define Voltage_Decimal_ON_GPIO_Port GPIOB
 #define Voltage_Decimal_OFF_Pin GPIO_PIN_11
 #define Voltage_Decimal_OFF_GPIO_Port GPIOB
+#define Voltage_Encoder_A_Pin GPIO_PIN_6
+#define Voltage_Encoder_A_GPIO_Port GPIOC
+#define Voltage_Encoder_B_Pin GPIO_PIN_7
+#define Voltage_Encoder_B_GPIO_Port GPIOC
 #define LD4_Pin GPIO_PIN_8
 #define LD4_GPIO_Port GPIOC
 #define LD3_Pin GPIO_PIN_9
