@@ -36,18 +36,16 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define VOLT_DIV_FACTOR		0.0445 		// assuming R1 = 16.4k and R2 = 1k
+#define VOLT_DIV_FACTOR		0.0515 		// assuming R1 = 16.4k and R2 = 1k
 #define CURR_DIV_FACTOR 	0.5	// CSA gain is 0.5V/A
 #define VOLT_OFFSET			0.2
 #define CURR_OFFSET			0.09
 #define CURR_REF			2.92		//reference voltage for CSA
-#define N					1000			// moving avg approx uses 500 past samples
+#define N					5000			// moving avg approx uses 500 past samples
 
 #define UNK                 -1
 #define NON_INTR             0
 #define INTR                 1
-
-
 
 /* USER CODE END PD */
 
@@ -62,6 +60,7 @@ TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 
 /* USER CODE BEGIN PV */
+
 //Elliott UI
 
 int interrupt_mode = UNK;   // which version of putchar/getchar to use.
@@ -99,8 +98,8 @@ float i_sense = 0;			//buck output current sense
 float rload = 0;            //buck calculated load from v_sense & i_sense
 float pid_error = 0;		//difference from target v or i and sensed v or i
 int user_en = 1;            //output enable flag
-//float i_lim = 0.020;        //user selected current limit @elliott
-//float v_lim = 5;            //user selected voltage limit @elliott
+//float i_lim = 0.010;        //user selected current limit @elliott
+//float v_lim = 3;            //user selected voltage limit @elliott
 float i_lim = 0;        //user selected current limit @elliott  made changes and uses actuall set limit
 float v_lim = 0;           //user selected voltage limit @elliott made changes
 
@@ -108,9 +107,9 @@ float v_sense_avg = 0;		//moving average val of v_sense
 float i_sense_avg = 0;		//moving average val of i_sense
 int cv_cc = 1;				//constant voltage = 1, constant current = 0 (modes of operation)
 
-float PID_Kp = 300;             //proportional gain
-float PID_Ki = 0.001;           //integral gain
-float PID_Kd = -5;              //derivative gain
+	float PID_Kp = 300;             //proportional gain
+	float PID_Ki = 0.001;           //integral gain
+	float PID_Kd = -5;              //derivative gain
 
 
 /* USER CODE END PV */
