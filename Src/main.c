@@ -107,9 +107,9 @@ float v_sense_avg = 0;		//moving average val of v_sense
 float i_sense_avg = 0;		//moving average val of i_sense
 int cv_cc = 1;				//constant voltage = 1, constant current = 0 (modes of operation)
 
-	float PID_Kp = 300;             //proportional gain
-	float PID_Ki = 0.001;           //integral gain
-	float PID_Kd = -5;              //derivative gain
+float PID_Kp = 300;             //proportional gain
+float PID_Ki = 0.001;           //integral gain
+float PID_Kd = 0;              //derivative gain
 
 
 /* USER CODE END PV */
@@ -204,7 +204,6 @@ int main(void)
 		PIDsetBuckPWM();		//set new PWM for buck using PID loop
 
 		getTemp();
-		HAL_ADC_Stop(&hadc);
 		max_trans();  //  Checks and displays max transient current when OE is pressed.
 
     /* USER CODE END WHILE */
