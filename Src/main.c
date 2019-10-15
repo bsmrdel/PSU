@@ -41,8 +41,8 @@
 #define VOLT_OFFSET			0.3
 #define CURR_OFFSET			0.15
 #define CURR_REF			2.958		//reference voltage for CSA
-#define cc_hysterisis       0.005
-#define N					100			// moving avg approx uses 500 past samples
+#define cc_hysterisis       0.01
+#define N					100			// moving avg approx uses 100 past samples
 
 #define UNK                 -1
 #define NON_INTR             0
@@ -65,7 +65,9 @@ TIM_HandleTypeDef htim2;
 //Elliott UI
 
 int interrupt_mode = UNK;   // which version of putchar/getchar to use.
-int error_elect = 0;   //rename and write conditions for errors
+int error_voltage = 0;   //rename and write conditions for errors
+int error_current = 0;
+int error_temp = 0;
 
 int User_Voltage_limit = 0;  //set from encoder
 int User_Current_limit = 0;  //set from encoder
@@ -114,7 +116,7 @@ float farh_average = 0;
 //int cv_cc = 1;				//constant voltage = 1, constant current = 0 (modes of operation)
 int cvcc_flag = 0;
 
-float PID_Kp = 300;             //proportional gain
+float PID_Kp = 400;             //proportional gain
 float PID_Ki = 0.001;           //integral gain
 float PID_Kd = 0;              //derivative gain
 
@@ -130,8 +132,7 @@ static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 //User Control
 
-//void tty_init(void);
-void OutputEnable(int);
+void OutputEnable(int error_voltage, int error_current, int error_temp);
 void getVoltage_limit(void);
 void getCurrent_limit(void);
 void serial_init(void);
@@ -188,8 +189,13 @@ int main(void)
 
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1); //Start PWM for Buck
 	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1); //Start PWM for FAN
-	printf("VoltageL.val=%d%c%c%c",0,255,255,255);	//prints voltage to screen	VoltageL.val=0ÿÿÿ
-	printf("CurrentL.val=%d%c%c%c",0,255,255,255);	//prints voltage to screen	VoltageL.val=0ÿÿÿ
+
+	printf("VoltageL.val=%d%c%c%c",0,255,255,255);		//prints voltage to screen	VoltageL.val=0ÿÿÿ
+	printf("CurrentL.val=%d%c%c%c",0,255,255,255);		//prints voltage to screen	VoltageL.val=0ÿÿÿ
+	printf("Temp.pco=%d%c%c%c",65535,255,255,255);		//turns temp number black on screen Temp.pco=0ÿÿÿ
+	printf("temptxt.pco=%d%c%c%c",65535,255,255,255);	//turns temp text black on screen tempxt.pco=0ÿÿÿ
+	printf("ftxt.pco=%d%c%c%c",65535,255,255,255);		//turns F text black on screen ftxt.pco=0ÿÿÿ
+
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
@@ -198,8 +204,8 @@ int main(void)
 	{
 
 		//User Interface
-		OutputEnable(error_elect); //Output enable function, error parameter can be used to send error signal to disable output
-		getVoltage_limit();   //change to 100
+		OutputEnable(error_voltage,error_current,error_temp);	//Output enable function, error parameters can be used to send error signal to disable output
+		getVoltage_limit();
 		getCurrent_limit();
 
 		v_lim = User_Voltage_limit/100.0;
@@ -212,11 +218,12 @@ int main(void)
 		Print_Power();
 		rload = v_sense_avg / i_sense_avg;
 
-		getMode();	//1 = Const V, 0 = Const C mode
-		PIDsetBuckPWM();		//set new PWM for buck using PID loop
+		getMode();			//1 = Const V, 0 = Const C mode
+		PIDsetBuckPWM();	//set new PWM for buck using PID loop
 
 		getTemp();
-		max_trans();  //  Checks and displays max transient current when OE is pressed.
+		max_trans();  		//Checks and displays max transient current when OE is pressed.
+		FanPWM();
 
 		/* USER CODE END WHILE */
 
@@ -506,44 +513,18 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void tty_init(void) {
-	setbuf(stdin,0);
-	setbuf(stdout,0);
-	setbuf(stderr,0);
 
-	RCC->AHBENR  |= RCC_AHBENR_GPIOAEN;         //Enable clock to GPIO port A
-	GPIOA->MODER |= 2<<18;                      //set PA9 as Alternate function
-	GPIOA->MODER |= 2<<20;                      //set PA10 as Alternate function
-	GPIOA->AFR[1]|= 0x110;                      //clear bits. Pins 0-7 are on AFR[0], 8-15 are on AFR[1]
-	RCC->APB2ENR |= RCC_APB2ENR_USART1EN;       //Enable clock to the USART module
-	USART1->CR1 &= ~USART_CR1_UE;               //Disable the USART module
-	USART1->CR1 &= ~USART_CR1_M;                //Configure USART for 8 bits
-	USART1->CR2 &= ~USART_CR2_STOP;             //Configure USART for 1 stop bit
-	USART1->CR1 &= ~USART_CR1_PCE;              //Configure USART for no parity bit
-	USART1->CR1 &= ~USART_CR1_OVER8;            //Use 16x oversampling
-	USART1->BRR = 0x1388;                       //0x1388 divisor for 9600 baud, 0x1a1 divisor for 115.2kbaud
-	USART1->CR1 |= USART_CR1_TE;                //Enable the USART for transmit
-	USART1->CR1 |= USART_CR1_RE;                //Enable the USART for receive
-	USART1->CR1 |= USART_CR1_UE;                //Enable the USART
-	while (!(USART1->ISR & USART_ISR_TEACK) && !(USART1->ISR & USART_ISR_REACK));    //Wait for TEACK to be set by hardware in the ISR register //Wait for REACK to be set by hardware in the ISR register
-	interrupt_mode = NON_INTR;                  //Set the 'interrupt_mode' variable to NON_INTR
-}
-
-
-void OutputEnable(int error){
+void OutputEnable(int error_voltage, int error_current, int error_temp){
 	int OutputOn = 0;
 	int OutputOff = 0;
 
 	OutputOn=HAL_GPIO_ReadPin(Output_Enable_ON_GPIO_Port,Output_Enable_ON_Pin);
 	OutputOff=HAL_GPIO_ReadPin(Output_Enable_OFF_GPIO_Port,Output_Enable_OFF_Pin);
 
-	if(error == 1){											//if an error has occurred
-		OutputOn = 0;										//make output turn off
-		OutputOff = 1;										//make output turn off
-		printf("Error has Occurred\n");						//print error to serial
-		printf("VoltageL.val=%d%c%c%c",9999,255,255,255);	//prints voltage to screen	VoltageL.val=888ÿÿÿ
-		printf("CurrentL.val=%d%c%c%c",9999,255,255,255);	//prints voltage to screen	VoltageL.val=888ÿÿÿ
-		}
+	if(error_voltage == 1 || error_current == 1 || error_temp == 1){		//if an error has occurred
+		OutputOn = 0;	//make output turn off
+		OutputOff = 1;	//make output turn off
+	}
 
 	if (OutputOn == 0 && OutputOff != 0 && OutputCounter == 0){		//if button has been pressed once
 		OutputCounter ++;
@@ -623,34 +604,34 @@ void getCurrent_limit(void){
 	if (CDecimalOn == 0 && CDecimalOff != 0 && CDecimalCounter == 0){	//if button has been pressed once
 		CDecimal = 1;								//start incrementing voltage by 0
 		CDecimalCounter ++;							//increment counter
-		printf("id1.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
-		printf("id2.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
-		printf("id3.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
-		printf("id4.val=%d%c%c%c",1,255,255,255);	//set decimal place indicator
+		printf("cd1.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
+		printf("cd2.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
+		printf("cd3.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
+		printf("cd4.val=%d%c%c%c",1,255,255,255);	//set decimal place indicator
 	}
 	else if(CDecimalOn != 0 && CDecimalOff == 0 && CDecimalCounter == 1){	//if button has been pressed twice
 		CDecimal = 10;								//start incrementing voltage by 10
 		CDecimalCounter ++;							//increment counter
-		printf("id1.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
-		printf("id2.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
-		printf("id3.val=%d%c%c%c",1,255,255,255);	//set decimal place indicator
-		printf("id4.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
+		printf("cd1.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
+		printf("cd2.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
+		printf("cd3.val=%d%c%c%c",1,255,255,255);	//set decimal place indicator
+		printf("cd4.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
 	}
 	else if(CDecimalOn == 0 && CDecimalOff != 0 && CDecimalCounter == 2){	//if button has been pressed three times
 		CDecimal = 100;								//start incrementing voltage by 100
 		CDecimalCounter ++;							//increment counter
-		printf("id1.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
-		printf("id2.val=%d%c%c%c",1,255,255,255);	//set decimal place indicator
-		printf("id3.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
-		printf("id4.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
+		printf("cd1.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
+		printf("cd2.val=%d%c%c%c",1,255,255,255);	//set decimal place indicator
+		printf("cd3.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
+		printf("cd4.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
 	}
 	else if(CDecimalOn != 0 && CDecimalOff == 0 && CDecimalCounter == 3){	//if button has been pressed four times
 		CDecimal = 1000;							//start incrementing voltage by 1000
 		CDecimalCounter = 0;						//reset counter
-		printf("id1.val=%d%c%c%c",1,255,255,255);	//set decimal place indicator
-		printf("id2.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
-		printf("id3.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
-		printf("id4.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
+		printf("cd1.val=%d%c%c%c",1,255,255,255);	//set decimal place indicator
+		printf("cd2.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
+		printf("cd3.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
+		printf("cd4.val=%d%c%c%c",0,255,255,255);	//set decimal place indicator
 	}
 
 	//CURRENT COUNTER
@@ -703,11 +684,18 @@ void getV (void){
 	percent_voltage = ((float) raw_voltage) / 4092;
 	voltage = percent_voltage * 3;						//0-3V ADC signal
 	v_sense = voltage / VOLT_DIV_FACTOR;				//0-50V value
-	v_sense_avg = approxMovingAvg(v_sense_avg, v_sense);
+	v_sense_avg = approxMovingAvg(v_sense_avg, v_sense);//take average
+	int v_sense_avg_int = (int)(v_sense_avg*100);		//make variable compatible with screen
 
-	if ((int)(v_sense_avg*100)!= Last_v_sense_avg){		//if the previous and the current state of the outputA are different, that means a Pulse has occurred
-		Last_v_sense_avg = (int)(v_sense_avg*100);		//updates the previous state of the average v sense with the current state
-		printf("VoltageO.val=%d%c%c%c",(int)(v_sense_avg*100),255,255,255);	//prints voltage to screen	VoltageO.val=888ÿÿÿ will have to calibrate and multiply by 100 and change to int
+	if (v_sense_avg_int != Last_v_sense_avg){			//if the previous and the current state of the outputA are different, that means a Pulse has occurred
+		Last_v_sense_avg = v_sense_avg_int;				//updates the previous state of the average v sense with the current state
+		printf("VoltageO.val=%d%c%c%c",v_sense_avg_int,255,255,255);	//prints voltage to screen	VoltageO.val=888ÿÿÿ will have to calibrate and multiply by 100 and change to int
+		if (v_sense_avg_int > 3200){						//if voltage is above safe value, return error
+			error_voltage = 1;							//set error as 1 to turn off outputs
+		}
+		else {
+			error_voltage = 0;							//set error to 0 if nothing is wrong
+		}
 	}
 	return;
 }
@@ -720,11 +708,18 @@ void getI (void){
 	percent_current = ((float) raw_current) / 4092;
 	current = CURR_REF - (percent_current * 3);			//0-3V ADC signal
 	i_sense = (current / CURR_DIV_FACTOR) + CURR_OFFSET;//0-3A value
-	i_sense_avg = approxMovingAvg(i_sense_avg, i_sense);
+	i_sense_avg = approxMovingAvg(i_sense_avg, i_sense);//take average
+	int i_sense_avg_int = (int)(i_sense_avg*100);		//make variable compatible with screen
 
-	if ((int)(i_sense_avg*100)!= Last_i_sense_avg){		//if the previous and the current state of the outputA are different, that means a Pulse has occurred
-		Last_i_sense_avg = (int)(i_sense_avg*100);		//updates the previous state of the average current sense with the current state
-		printf("CurrentO.val=%d%c%c%c",(int)(i_sense_avg*100),255,255,255);	//prints current to screen CurrentO.val=888ÿÿÿ	will have to calibrate and multiply by 100
+	if (i_sense_avg_int != Last_i_sense_avg){			//if the previous and the current state of the outputA are different, that means a Pulse has occurred
+		Last_i_sense_avg = i_sense_avg_int;				//updates the previous state of the average current sense with the current state
+		printf("CurrentO.val=%d%c%c%c",i_sense_avg_int,255,255,255);	//prints current to screen CurrentO.val=888ÿÿÿ	will have to calibrate and multiply by 100
+		if (i_sense_avg_int > 300){						//if voltage is above safe value, return error
+			error_current = 1;							//set error as 1 to turn off outputs
+		}
+		else {
+			error_current = 0;							//set error to 0 if nothing is wrong
+		}
 	}
 	return;
 }
@@ -742,16 +737,22 @@ void Print_Power (void){
 void getTemp (void){
 
 	farh = ((raw_tempsense_value/4096.0)*3000.0)/10.0-30; 					//calculate the farenheit using 5V
-	farh_average = approxMovingAvg(farh_average,farh);					//finds average of temperature
-	if (farh_average != Lastfarh){												//if the previous and the current state of the temperature are different, that means a Pulse has occurred
-		Lastfarh = farh_average;												//updates the previous state of the temperature with the current state
-		printf("temp.val=%d%c%c%c",(int)(farh_average*100),255,255,255);		//prints temperature to screen	temp.val=888ÿÿÿ
-		if(farh_average > 200){													//if temperature rises above 100 F, alert user.
-			error_elect = 0;
-			printf("button.val=%d%c%c%c",1,255,255,255);				//turns button red on screen button.val=888ÿÿÿ
+	farh_average = approxMovingAvg(farh_average,farh);						//finds average of temperature
+
+	if (farh_average != Lastfarh){											//if the previous and the current state of the temperature are different, that means a Pulse has occurred
+		Lastfarh = farh_average;											//updates the previous state of the temperature with the current state
+		printf("Temp.val=%d%c%c%c",(int)(farh_average*100)/10,255,255,255);	//prints temperature to screen	temp.val=888ÿÿÿ
+		if(farh_average >= 100 && error_temp == 0){												//if temperature rises above 100 F, alert user.
+			error_temp = 1;													//an error has occurred
+			printf("Temp.pco=%d%c%c%c",63488,255,255,255);					//turns temp number red on screen button.val=888ÿÿÿ
+			printf("temptxt.pco=%d%c%c%c",63488,255,255,255);				//turns temp text red on screen button.val=888ÿÿÿ
+			printf("ftxt.pco=%d%c%c%c",63488,255,255,255);					//turns F text red on screen button.val=888ÿÿÿ
 		}
-		else{
-			printf("button.val=%d%c%c%c",0,255,255,255);				//turns button red on screen button.val=888ÿÿÿ
+		else if(farh_average < 100 && error_temp == 1){					//if nothing is wrong and something was wrong before
+			error_temp = 0;													//an error has not occurred
+			printf("Temp.pco=%d%c%c%c",65535,255,255,255);					//turns temp number black on screen Temp.pco=0ÿÿÿ
+			printf("temptxt.pco=%d%c%c%c",65535,255,255,255);				//turns temp text black on screen tempxt.pco=0ÿÿÿ
+			printf("ftxt.pco=%d%c%c%c",65535,255,255,255);					//turns F text black on screen ftxt.pco=0ÿÿÿ
 		}
 	}
 	return;
@@ -761,14 +762,14 @@ void FanPWM (void){
 
 	float fan_duty=0;
 
-	if(farh>90){
-		fan_duty =95*2;
+	if(farh>80){
+		fan_duty =95*4;
 	}
 	else{
-		fan_duty = 50*2;
+		fan_duty = 30*4;
 	}
 
-	__HAL_TIM_SET_COMPARE(&htim1,TIM_CHANNEL_1,fan_duty);
+	__HAL_TIM_SET_COMPARE(&htim2,TIM_CHANNEL_1,fan_duty);
 
 }
 
@@ -828,13 +829,14 @@ void max_trans(void){
 
 	if (ResetOn == 0 && ResetOff != 0){										//if button has been pressed once
 		if ((int)(i_sense_avg*100.0)>= max_trans_current){					//if the previous and the current state of the outputA are different, that means a Pulse has occurred
-			max_trans_current = (int)(i_sense_avg*100.0);				//updates the previous state of the average current sense with the current state
-			printf("Trans.val=%d%c%c%c",max_trans_current,255,255,255);	//prints Maximum Current Transient to screen	will have to calibrate and multiply by 100
+			max_trans_current = (int)(i_sense_avg*100.0);					//updates the previous state of the average current sense with the current state
+			printf("Trans.val=%d%c%c%c",max_trans_current,255,255,255);		//prints Maximum Current Transient to screen will have to calibrate and multiply by 100
+			printf("TransON.val=%d%c%c%c",1,255,255,255);					//prints Maximum Current Transient is reading to screen.
 		}
 	}
-	else if(ResetOn != 0 && ResetOff == 0){							//if button has been pressed twice
-		max_trans_current = 0;										//reset transient
-		printf("Trans.val=%d%c%c%c",max_trans_current,255,255,255);	//prints Maximum Current Transient to screen	will have to calibrate and multiply by 100
+	else if(ResetOn != 0 && ResetOff == 0){									//if button has been pressed twice
+		printf("Trans.val=%d%c%c%c",max_trans_current,255,255,255);			//prints Maximum Current Transient to screen will have to calibrate and multiply by 100
+		printf("TransON.val=%d%c%c%c",0,255,255,255);						//prints Maximum Current Transient is not reading to screen.
 	}
 }
 
