@@ -36,12 +36,13 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define VOLT_DIV_FACTOR		0.0515 		// assuming R1 = 16.4k and R2 = 1k
-#define CURR_DIV_FACTOR 	0.5	// CSA gain is 0.5V/A
-#define VOLT_OFFSET			0.2
-#define CURR_OFFSET			0.09
-#define CURR_REF			2.92		//reference voltage for CSA
-#define N					5000			// moving avg approx uses 500 past samples
+#define VOLT_DIV_FACTOR		0.0445 		// assuming R1 = 16.4k and R2 = 1k
+#define CURR_DIV_FACTOR 	0.235	// CSA gain is 0.5V/A
+#define VOLT_OFFSET			0.3
+#define CURR_OFFSET			0.15
+#define CURR_REF			2.958		//reference voltage for CSA
+#define cc_hysterisis       0.005
+#define N					1500			// moving avg approx uses 500 past samples
 
 #define UNK                 -1
 #define NON_INTR             0
@@ -82,12 +83,14 @@ int CaState = 0;
 int CbState = 0;
 int VaLastState = 0;
 int CaLastState = 0;
-
-float Watts=0;  //Power being displayed to user, calculated from output V and I
+int Watts = 0;  //Power being displayed to user, calculated from output V and I
+int LastWatts = 0;
+int Last_v_sense_avg = 0;
+int Last_i_sense_avg = 0;
 
 int raw_tempsense_value = 0; //12b value from adc for TempSense
 float farh=0;
-float max_trans_current = 0;
+int max_trans_current = 0;
 
 //brad's buck converter variables
 int raw_voltage = 0;            //12b value from adc for vsense
@@ -105,7 +108,8 @@ float v_lim = 0;           //user selected voltage limit @elliott made changes
 
 float v_sense_avg = 0;		//moving average val of v_sense
 float i_sense_avg = 0;		//moving average val of i_sense
-int cv_cc = 1;				//constant voltage = 1, constant current = 0 (modes of operation)
+//int cv_cc = 1;				//constant voltage = 1, constant current = 0 (modes of operation)
+int cvcc_flag = 0;
 
 float PID_Kp = 300;             //proportional gain
 float PID_Ki = 0.001;           //integral gain
@@ -129,13 +133,14 @@ void getVoltage_limit(void);
 void getCurrent_limit(void);
 void serial_init(void);
 
+
 static float approxMovingAvg(float avg, float new_sample);
 void senseADC(void);
 void getV(void);
 void getI(void);
 void getTemp(void);
 void FanPWM(void);
-int getMode(void);
+void getMode(void);
 void max_trans(void);
 void PIDsetBuckPWM();
 
@@ -179,6 +184,8 @@ int main(void)
 
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1); //Start PWM for Buck
 	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1); //Start PWM for FAN
+	printf("VoltageL.val=%d%c%c%c",0,255,255,255);	//prints voltage to screen	VoltageL.val=0ÿÿÿ
+	printf("CurrentL.val=%d%c%c%c",0,255,255,255);	//prints voltage to screen	VoltageL.val=0ÿÿÿ
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -200,7 +207,7 @@ int main(void)
 		getI();
 		rload = v_sense_avg / i_sense_avg;
 
-		cv_cc = getMode();	//1 = Const V, 0 = Const C mode
+		getMode();	//1 = Const V, 0 = Const C mode
 		PIDsetBuckPWM();		//set new PWM for buck using PID loop
 
 		getTemp();
@@ -525,12 +532,12 @@ void OutputEnable(int error){
 	OutputOn=HAL_GPIO_ReadPin(Output_Enable_ON_GPIO_Port,Output_Enable_ON_Pin);
 	OutputOff=HAL_GPIO_ReadPin(Output_Enable_OFF_GPIO_Port,Output_Enable_OFF_Pin);
 
-	if(error == 1){								//if an error has occurred
-		OutputOn = 0;							//make output turn off
-		OutputOff = 1;							//make output turn off
-		printf("Error has Occurred\n");			//print error to serial
-		printf("VoltageL.val=%d%c%c%c",9999,255,255,255);	//prints voltage to screen	VoltageL.val=888Ã¿Ã¿Ã¿
-		printf("CurrentL.val=%d%c%c%c",9999,255,255,255);	//prints voltage to screen	VoltageL.val=888Ã¿Ã¿Ã¿
+	if(error == 1){											//if an error has occurred
+		OutputOn = 0;										//make output turn off
+		OutputOff = 1;										//make output turn off
+		printf("Error has Occurred\n");						//print error to serial
+		printf("VoltageL.val=%d%c%c%c",9999,255,255,255);	//prints voltage to screen	VoltageL.val=888ÿÿÿ
+		printf("CurrentL.val=%d%c%c%c",9999,255,255,255);	//prints voltage to screen	VoltageL.val=888ÿÿÿ
 		while(1){}
 	}
 
@@ -544,114 +551,92 @@ void OutputEnable(int error){
 
 void getVoltage_limit(void){
 
-
-	VDecimalOn=HAL_GPIO_ReadPin(Voltage_Decimal_ON_GPIO_Port,Voltage_Decimal_ON_Pin);//read input from PA0 Reads the "current" state of the button
-	VDecimalOff=HAL_GPIO_ReadPin(Voltage_Decimal_OFF_GPIO_Port,Voltage_Decimal_OFF_Pin);//read input from PA1 Reads the "current" state of the button
+	VDecimalOn = HAL_GPIO_ReadPin(Voltage_Decimal_ON_GPIO_Port,Voltage_Decimal_ON_Pin);		//read input from PA0 Reads the "current" state of the button
+	VDecimalOff = HAL_GPIO_ReadPin(Voltage_Decimal_OFF_GPIO_Port,Voltage_Decimal_OFF_Pin);	//read input from PA1 Reads the "current" state of the button
 
 	if (VDecimalOn == 0 && VDecimalOff != 0 && VDecimalCounter == 0){	//if button has been pressed once
-		VDecimal = 1;							//start incrementing voltage by 0
-		VDecimalCounter ++;						//increment counter
+		VDecimal = 1;		//start incrementing voltage by 0
+		VDecimalCounter ++;	//increment counter
 	}
 	else if(VDecimalOn != 0 && VDecimalOff == 0 && VDecimalCounter == 1){	//if button has been pressed twice
-		VDecimal = 10;							//start incrementing voltage by 10
-		VDecimalCounter ++;						//increment counter
+		VDecimal = 10;		//start incrementing voltage by 10
+		VDecimalCounter ++;	//increment counter
 	}
 	else if(VDecimalOn == 0 && VDecimalOff != 0 && VDecimalCounter == 2){	//if button has been pressed three times
-		VDecimal = 100;							//start incrementing voltage by 100
-		VDecimalCounter ++;						//increment counter
+		VDecimal = 100;		//start incrementing voltage by 100
+		VDecimalCounter ++;	//increment counter
 	}
 	else if(VDecimalOn != 0 && VDecimalOff == 0 && VDecimalCounter == 3){	//if button has been pressed four times
-		VDecimal = 1000;						//start incrementing voltage by 1000
-		VDecimalCounter = 0;					//reset counter
+		VDecimal = 1000;	//start incrementing voltage by 1000
+		VDecimalCounter = 0;//reset counter
 	}
 
 	//VOLTAGE COUNTER
+	VaState = HAL_GPIO_ReadPin(Voltage_Encoder_A_GPIO_Port,Voltage_Encoder_A_Pin);	//read input from PA4 // Reads the "current" state of the outputA
+	VbState = HAL_GPIO_ReadPin(Voltage_Encoder_B_GPIO_Port,Voltage_Encoder_B_Pin);	//read input from PA5// Reads the "current" state of the outputB
 
-
-	VaState=HAL_GPIO_ReadPin(Voltage_Encoder_A_GPIO_Port,Voltage_Encoder_A_Pin);//read input from PA4 // Reads the "current" state of the outputA
-	VbState=HAL_GPIO_ReadPin(Voltage_Encoder_B_GPIO_Port,Voltage_Encoder_B_Pin);//read input from PA5// Reads the "current" state of the outputB
-
-	if (VaState != VaLastState){				//if the previous and the current state of the outputA are different, that means a Pulse has occurred
-		if (VaState != 0 && VbState == 0) {		//if the outputB state is different to the outputA state, that means the encoder is rotating clockwise
-			User_Voltage_limit = User_Voltage_limit + VDecimal;		//increment voltage
-			if (User_Voltage_limit > 3200) {       		//our power supply cannot go over 32 V
-				User_Voltage_limit = 3200;         		//don't allow voltage setting above 32 V
+	if (VaState != VaLastState){								//if the previous and the current state of the outputA are different, that means a Pulse has occurred
+		if (VaState != 0 && VbState == 0) {						//if the outputB state is different to the outputA state, that means the encoder is rotating clockwise
+			User_Voltage_limit = User_Voltage_limit + VDecimal;	//increment voltage
+			if (User_Voltage_limit > 3200) {       				//our power supply cannot go over 32 V
+				User_Voltage_limit = 3200;         				//don't allow voltage setting above 32 V
 			}
 		}
-		else if (VaState != 0 && VbState != 0){	//if the outputB state and the outputA state are both 0, that means the encoder is rotating clockwise
-			User_Voltage_limit = User_Voltage_limit - VDecimal;		//decrement voltage
-			if (User_Voltage_limit < -3200) {				//our power supply cannot go under -32 V
-				User_Voltage_limit = -3200;				//don't allow voltage setting below -32 V
+		else if (VaState != 0 && VbState != 0){					//if the outputB state and the outputA state are both 0, that means the encoder is rotating clockwise
+			User_Voltage_limit = User_Voltage_limit - VDecimal;	//decrement voltage
+			if (User_Voltage_limit < 0) {						//our power supply cannot go under -32 V
+				User_Voltage_limit = 0;							//don't allow voltage setting below -32 V
 			}
 		}
-
-		VaLastState = VaState;          		//updates the previous state of the outputA with the current state
-
-		printf("VoltageL.val=%d%c%c%c",User_Voltage_limit,255,255,255);	//prints voltage to screen	VoltageL.val=888Ã¿Ã¿Ã¿
+		VaLastState = VaState;          								//updates the previous state of the outputA with the current state
+		printf("VoltageL.val=%d%c%c%c",User_Voltage_limit,255,255,255);	//prints voltage to screen	VoltageL.val=888ÿÿÿ
 	}
-
 }
 
 void getCurrent_limit(void){
 
-
-	CDecimalOn=HAL_GPIO_ReadPin(Current_Decimal_ON_GPIO_Port,Current_Decimal_ON_Pin);//read input from PA2 Reads the "current" state of the button
-	CDecimalOff=HAL_GPIO_ReadPin(Current_Decimal_OFF_GPIO_Port,Current_Decimal_OFF_Pin);//read input from PA3 Reads the "current" state of the button
-
+	CDecimalOn = HAL_GPIO_ReadPin(Current_Decimal_ON_GPIO_Port,Current_Decimal_ON_Pin);		//read input from PA2 Reads the "current" state of the button
+	CDecimalOff = HAL_GPIO_ReadPin(Current_Decimal_OFF_GPIO_Port,Current_Decimal_OFF_Pin);	//read input from PA3 Reads the "current" state of the button
 
 	if (CDecimalOn == 0 && CDecimalOff != 0 && CDecimalCounter == 0){	//if button has been pressed once
-		CDecimal = 1;							//start incrementing voltage by 0
-		CDecimalCounter ++;						//increment counter
+		CDecimal = 1;		//start incrementing voltage by 0
+		CDecimalCounter ++;	//increment counter
 	}
 	else if(CDecimalOn != 0 && CDecimalOff == 0 && CDecimalCounter == 1){	//if button has been pressed twice
-		CDecimal = 10;							//start incrementing voltage by 10
-		CDecimalCounter ++;						//increment counter
+		CDecimal = 10;		//start incrementing voltage by 10
+		CDecimalCounter ++;	//increment counter
 	}
 	else if(CDecimalOn == 0 && CDecimalOff != 0 && CDecimalCounter == 2){	//if button has been pressed three times
-		CDecimal = 100;							//start incrementing voltage by 100
-		CDecimalCounter ++;						//increment counter
+		CDecimal = 100;		//start incrementing voltage by 100
+		CDecimalCounter ++;	//increment counter
 	}
 	else if(CDecimalOn != 0 && CDecimalOff == 0 && CDecimalCounter == 3){	//if button has been pressed four times
-		CDecimal = 1000;						//start incrementing voltage by 1000
-		CDecimalCounter = 0;					//reset counter
+		CDecimal = 1000;	//start incrementing voltage by 1000
+		CDecimalCounter = 0;//reset counter
 	}
 
 	//CURRENT COUNTER
+	CaState = HAL_GPIO_ReadPin(Current_Encoder_A_GPIO_Port,Current_Encoder_A_Pin);	//read input from PA4 // Reads the "current" state of the outputA
+	CbState = HAL_GPIO_ReadPin(Current_Encoder_B_GPIO_Port,Current_Encoder_B_Pin);	//read input from PA5// Reads the "current" state of the outputB
 
-
-	CaState=HAL_GPIO_ReadPin(Current_Encoder_A_GPIO_Port,Current_Encoder_A_Pin);//read input from PA4 // Reads the "current" state of the outputA
-	CbState=HAL_GPIO_ReadPin(Current_Encoder_B_GPIO_Port,Current_Encoder_B_Pin);//read input from PA5// Reads the "current" state of the outputB
-
-	if (CaState != CaLastState){				//if the previous and the current state of the outputA are different, that means a Pulse has occurred
-		if (CaState != 0 && CbState == 0) {		//if the outputB state is different to the outputA state, that means the encoder is rotating clockwise
-			User_Current_limit = User_Current_limit + CDecimal;		//increment voltage
-			if (User_Current_limit > 300) {       		//our power supply cannot go over 3A
-				User_Current_limit = 300;         		//don't allow voltage setting above 3A
+	if (CaState != CaLastState){										//if the previous and the current state of the outputA are different, that means a Pulse has occurred
+		if (CaState != 0 && CbState == 0) {								//if the outputB state is different to the outputA state, that means the encoder is rotating clockwise
+			User_Current_limit = User_Current_limit + CDecimal;			//increment voltage
+			if (User_Current_limit > 300) {       						//our power supply cannot go over 3A
+				User_Current_limit = 300;         						//don't allow voltage setting above 3A
 			}
 		}
-		else if (CaState != 0 && CbState != 0){	//if the outputB state and the outputA state are both 0, that means the encoder is rotating clockwise
-			User_Current_limit = User_Current_limit - CDecimal;		//decrement voltage
-			if (User_Current_limit < 0) {				//our power supply cannot go under 0A
-				User_Current_limit = 0;				//don't allow voltage setting below 0A
+		else if (CaState != 0 && CbState != 0){							//if the outputB state and the outputA state are both 0, that means the encoder is rotating clockwise
+			User_Current_limit = User_Current_limit - CDecimal;			//decrement voltage
+			if (User_Current_limit < 0) {								//our power supply cannot go under 0A
+				User_Current_limit = 0;									//don't allow voltage setting below 0A
 			}
 		}
-
-		CaLastState = CaState;          		//updates the previous state of the outputA with the current state
-
-		printf("CurrentL.val=%d%c%c%c",User_Current_limit,255,255,255);	//prints voltage to screen	Current.val=888Ã¿Ã¿Ã¿
+		CaLastState = CaState;          								//updates the previous state of the outputA with the current state
+		printf("CurrentL.val=%d%c%c%c",User_Current_limit,255,255,255);	//prints voltage to screen	Current.val=888ÿÿÿ
 	}
 
 }
-
-void Print_Power (void){
-
-	Watts = (v_sense * i_sense) / 100.0;		//calculate power
-//	if (Watts != LastWatts){		//if the previous and the current state of the outputA are different, that means a Pulse has occurred
-//		LastWatts = Watts;
-    printf("Watts.val=%d%c%c%c",Watts,255,255,255);	//prints voltage to screen	VoltageL.val=888Ã¿Ã¿Ã¿
-
-}
-
 
 void senseADC (void){
 
@@ -682,8 +667,10 @@ void getV (void){
 	v_sense = voltage / VOLT_DIV_FACTOR;			//0-50V value
 	v_sense_avg = approxMovingAvg(v_sense_avg, v_sense);
 
-	//printf("VoltageO.val=%d%c%c%c",v_sense_avg*100.0,255,255,255);	//prints voltage to screen	will have to calibrate and multiply by 100 and change to int
-
+	if ((int)(v_sense_avg*100)!= Last_v_sense_avg){		//if the previous and the current state of the outputA are different, that means a Pulse has occurred
+		Last_v_sense_avg = (int)(v_sense_avg*100);		//updates the previous state of the average v sense with the current state
+		printf("VoltageO.val=%d%c%c%c",(int)(v_sense_avg*100),255,255,255);	//prints voltage to screen	will have to calibrate and multiply by 100 and change to int
+	}
 	return;
 }
 
@@ -694,11 +681,23 @@ void getI (void){
 
 	percent_current = ((float) raw_current) / 4092;
 	current = CURR_REF - (percent_current * 3);					//0-3V ADC signal
-	i_sense = (current / CURR_DIV_FACTOR) + CURR_OFFSET;			//0-3A value
+	i_sense = (current / CURR_DIV_FACTOR) + CURR_OFFSET;		//0-3A value
 	i_sense_avg = approxMovingAvg(i_sense_avg, i_sense);
 
-	//printf("CurrentO.val=%d%c%c%c",i_sense_avg*100.0,255,255,255);	//prints current to screen	will have to calibrate and multiply by 100
-	return;
+	if ((int)(i_sense_avg*100)!= Last_i_sense_avg){		//if the previous and the current state of the outputA are different, that means a Pulse has occurred
+			Last_i_sense_avg = (int)(i_sense_avg*100);	//updates the previous state of the average current sense with the current state
+			printf("CurrentO.val=%d%c%c%c",(int)(i_sense_avg*100),255,255,255);	//prints current to screen	will have to calibrate and multiply by 100
+	}
+    return;
+}
+
+void Print_Power (void){
+
+	Watts = ((int)(v_sense_avg*100) * (int)(i_sense_avg*100)) / 100;	//calculate power
+	if (Watts != LastWatts){							//if the previous and the current state of the outputA are different, that means a Pulse has occurred
+		LastWatts = Watts;								//updates the previous state of the watts with the current state
+		printf("Watts.val=%d%c%c%c",Watts,255,255,255);	//prints voltage to screen	VoltageL.val=888ÿÿÿ
+	}
 }
 
 void getTemp (void){
@@ -731,43 +730,62 @@ static float approxMovingAvg(float avg, float newsample)
 	return avg;
 }
 
-int getMode(void){
-	int cvcc_flag = 0;
+void getMode(void){
 
-	if(i_sense_avg >= i_lim) //cc mode
-		cvcc_flag = 0;
-	else if(v_sense_avg >= v_lim) //cv mode
-		cvcc_flag = 1;
-	else
-		cvcc_flag = 1;		//otherwise assume cv mode
+	if(cvcc_flag == 0){   //check if you were in cc mode
+		if(i_sense_avg >=(i_lim - cc_hysterisis)){ //checking lower range
+			//cc mode
+			cvcc_flag = 0;
+		}
+		else
+			cvcc_flag = 1;		//otherwise assume cv mode
+	}
+	else{
+		if(i_sense_avg >=i_lim){ //checking lower range
+			//cc mode
+			cvcc_flag = 0;
+		}
+		else
+			cvcc_flag = 1;		//otherwise assume cv mode
+
+	}
 
 	// turn on top STM32F0disc LED for CV, bottom for CC mode for debug
-	if(cv_cc == 1){
-		HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(LD4_GPIO_Port, LD4_Pin, GPIO_PIN_SET);
+	if(cvcc_flag == 1){
+		//dev board LEDS
+//		HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_RESET);
+//		HAL_GPIO_WritePin(LD4_GPIO_Port, LD4_Pin, GPIO_PIN_SET);
+		//breadboard LEDS
+		HAL_GPIO_WritePin(CC_LED_GPIO_Port, CC_LED_Pin, GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(CV_LED_GPIO_Port, CV_LED_Pin, GPIO_PIN_SET);
 	}
 	else
 	{
-		HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_SET);
-		HAL_GPIO_WritePin(LD4_GPIO_Port, LD4_Pin, GPIO_PIN_RESET);
+		//dev board LEDs
+//		HAL_GPIO_WritePin(LD3_GPIO_Port, LD3_Pin, GPIO_PIN_SET);
+//		HAL_GPIO_WritePin(LD4_GPIO_Port, LD4_Pin, GPIO_PIN_RESET);
+		// breadboard LEDS
+		HAL_GPIO_WritePin(CC_LED_GPIO_Port, CC_LED_Pin, GPIO_PIN_SET);
+		HAL_GPIO_WritePin(CV_LED_GPIO_Port, CV_LED_Pin, GPIO_PIN_RESET);
 	}
-	return cvcc_flag;
+	return;
 }
 
 void max_trans(void){
-	//if()
 
-//	MAX TRANSIENT RESET
-//	ResetOn  = GPIOB->IDR & 1<<0;				//read input from PA11 Reads the "current" state of the button
-//	ResetOff = GPIOB->IDR & 1<<1;				//read input from PA12 Reads the "current" state of the button
-//
-//	if (ResetOn == 0 && ResetOff != 0){			//if button has been pressed once
-//		//printf("Ready to Measure Maximum Current Transient\n");	//print to serial
-//	}
-//	else if(ResetOn != 0 && ResetOff == 0){		//if button has been pressed twice
-//		Trans = 0;								//reset transient
-//		//printf("Maximum Current Transient has Been Reset\n");		//print to serial
-//	}
+	int ResetOn  = HAL_GPIO_ReadPin(Max_transient_Reset_ON_GPIO_Port,Max_transient_Reset_ON_Pin);	//read input from PB0 Reads the "current" state of the button
+	int ResetOff = HAL_GPIO_ReadPin(Max_transient_Reset_OFF_GPIO_Port,Max_transient_Reset_OFF_Pin);	//read input from PB1 Reads the "current" state of the button
+
+	if (ResetOn == 0 && ResetOff != 0){										//if button has been pressed once
+		if ((int)(i_sense_avg*100.0)>= max_trans_current){					//if the previous and the current state of the outputA are different, that means a Pulse has occurred
+				max_trans_current = (int)(i_sense_avg*100.0);				//updates the previous state of the average current sense with the current state
+				printf("Trans.val=%d%c%c%c",max_trans_current,255,255,255);	//prints Maximum Current Transient to screen	will have to calibrate and multiply by 100
+		}
+	}
+	else if(ResetOn != 0 && ResetOff == 0){							//if button has been pressed twice
+		max_trans_current = 0;										//reset transient
+		printf("Trans.val=%d%c%c%c",max_trans_current,255,255,255);	//prints Maximum Current Transient to screen	will have to calibrate and multiply by 100
+	}
 }
 
 void PIDsetBuckPWM(void){
@@ -779,11 +797,11 @@ void PIDsetBuckPWM(void){
 
 	arm_pid_init_f32(&PID, 1);
 
-	if(cv_cc == 1)	//if in CV mode
+	if(cvcc_flag == 1){	//if in CV mode
 		pid_error = v_lim - v_sense_avg;
-	else			//in CC mode
+	}else{			//in CC mode
 		pid_error = i_lim - i_sense_avg;
-
+	}
 	pwm_val = arm_pid_f32(&PID, pid_error);
 
 	if(pwm_val > 46)
