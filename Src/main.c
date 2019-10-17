@@ -85,7 +85,9 @@ int CDecimalOff = 0;
 int CaState = 0;
 int CbState = 0;
 int VaLastState = 0;
+int VbLastState = 0;
 int CaLastState = 0;
+int CbLastState = 0;
 int Watts = 0;  	//Power being displayed to user, calculated from output V and I
 int LastWatts = 0;
 int Last_v_sense_avg = 0;
@@ -93,7 +95,7 @@ int Last_i_sense_avg = 0;
 int Lastfarh = 0;
 
 int raw_tempsense_value = 0; //12b value from adc for TempSense
-float farh=0;
+float farh = 0;
 int max_trans_current = 0;
 
 //brad's buck converter variables
@@ -204,7 +206,7 @@ int main(void)
 	{
 
 		//User Interface
-		OutputEnable(error_voltage,error_current,error_temp);	//Output enable function, error parameters can be used to send error signal to disable output
+		//OutputEnable(error_voltage,error_current,error_temp);	//Output enable function, error parameters can be used to send error signal to disable output
 		getVoltage_limit();
 		getCurrent_limit();
 
@@ -578,22 +580,22 @@ void getVoltage_limit(void){
 	VaState = HAL_GPIO_ReadPin(Voltage_Encoder_A_GPIO_Port,Voltage_Encoder_A_Pin);	//read input from PA4 // Reads the "current" state of the outputA
 	VbState = HAL_GPIO_ReadPin(Voltage_Encoder_B_GPIO_Port,Voltage_Encoder_B_Pin);	//read input from PA5// Reads the "current" state of the outputB
 
-	if (VaState != VaLastState){								//if the previous and the current state of the outputA are different, that means a Pulse has occurred
-		if (VaState != 0 && VbState == 0) {						//if the outputB state is different to the outputA state, that means the encoder is rotating clockwise
-			User_Voltage_limit = User_Voltage_limit + VDecimal;	//increment voltage
-			if (User_Voltage_limit > 3200) {       				//our power supply cannot go over 32 V
-				User_Voltage_limit = 3200;         				//don't allow voltage setting above 32 V
-			}
+	if (VaState != VaLastState && VaState > VbState){		//if the previous and the current state of the outputA are different, that means a Pulse has occurred and if the outputB state is different to the outputA state, that means the encoder is rotating clockwise
+		User_Voltage_limit = User_Voltage_limit + VDecimal;	//increment voltage
+		if (User_Voltage_limit > 3200) {       				//our power supply cannot go over 32 V
+			User_Voltage_limit = 3200;         				//don't allow voltage setting above 32 V
 		}
-		else if (VaState != 0 && VbState != 0){					//if the outputB state and the outputA state are both 0, that means the encoder is rotating clockwise
-			User_Voltage_limit = User_Voltage_limit - VDecimal;	//decrement voltage
-			if (User_Voltage_limit < 0) {						//our power supply cannot go under -32 V
-				User_Voltage_limit = 0;							//don't allow voltage setting below -32 V
-			}
-		}
-		VaLastState = VaState;          								//updates the previous state of the outputA with the current state
 		printf("VoltageL.val=%d%c%c%c",User_Voltage_limit,255,255,255);	//prints voltage to screen VoltageL.val=888ÿÿÿ
 	}
+	else if (VbState != VbLastState && VbState > VaState){	//if the previous and the current state of the outputA are different, that means a Pulse has occurred and //if the outputB state is different to the outputA state, that means the encoder is rotating clockwise
+		User_Voltage_limit = User_Voltage_limit - VDecimal;	//increment voltage
+		if (User_Voltage_limit < 0) {       				//our power supply cannot go over 32 V
+			User_Voltage_limit = 0;         				//don't allow voltage setting above 32 V
+		}
+		printf("VoltageL.val=%d%c%c%c",User_Voltage_limit,255,255,255);	//prints voltage to screen VoltageL.val=888ÿÿÿ
+	}
+	VaLastState = VaState;          						//updates the previous state of the outputA with the current state
+	VbLastState = VbState;									//updates the previous state of the outputB with the current state
 }
 
 void getCurrent_limit(void){
@@ -638,23 +640,22 @@ void getCurrent_limit(void){
 	CaState = HAL_GPIO_ReadPin(Current_Encoder_A_GPIO_Port,Current_Encoder_A_Pin);	//read input from PA4 // Reads the "current" state of the outputA
 	CbState = HAL_GPIO_ReadPin(Current_Encoder_B_GPIO_Port,Current_Encoder_B_Pin);	//read input from PA5// Reads the "current" state of the outputB
 
-	if (CaState != CaLastState){										//if the previous and the current state of the outputA are different, that means a Pulse has occurred
-		if (CaState != 0 && CbState == 0) {								//if the outputB state is different to the outputA state, that means the encoder is rotating clockwise
-			User_Current_limit = User_Current_limit + CDecimal;			//increment voltage
-			if (User_Current_limit > 300) {       						//our power supply cannot go over 3A
-				User_Current_limit = 300;         						//don't allow voltage setting above 3A
-			}
+	if (CaState != CaLastState && CaState > CbState){		//if the previous and the current state of the outputA are different, that means a Pulse has occurred and if the outputB state is different to the outputA state, that means the encoder is rotating clockwise
+		User_Current_limit = User_Current_limit + CDecimal;	//increment voltage
+		if (User_Current_limit > 3200) {       				//our power supply cannot go over 32 V
+			User_Current_limit = 3200;         				//don't allow voltage setting above 32 V
 		}
-		else if (CaState != 0 && CbState != 0){							//if the outputB state and the outputA state are both 0, that means the encoder is rotating clockwise
-			User_Current_limit = User_Current_limit - CDecimal;			//decrement voltage
-			if (User_Current_limit < 0) {								//our power supply cannot go under 0A
-				User_Current_limit = 0;									//don't allow voltage setting below 0A
-			}
-		}
-		CaLastState = CaState;          								//updates the previous state of the outputA with the current state
-		printf("CurrentL.val=%d%c%c%c",User_Current_limit,255,255,255);	//prints voltage to screenCurrentL.val=888ÿÿÿ
+		printf("CurrentL.val=%d%c%c%c",User_Current_limit,255,255,255);	//prints voltage to screen VoltageL.val=888ÿÿÿ
 	}
-
+	else if (CbState != CbLastState && CbState > CaState){	//if the previous and the current state of the outputA are different, that means a Pulse has occurred and //if the outputB state is different to the outputA state, that means the encoder is rotating clockwise
+		User_Current_limit = User_Current_limit - CDecimal;	//increment voltage
+		if (User_Current_limit < 0) {       				//our power supply cannot go over 32 V
+			User_Current_limit = 0;         				//don't allow voltage setting above 32 V
+		}
+		printf("CurrentL.val=%d%c%c%c",User_Current_limit,255,255,255);	//prints voltage to screen VoltageL.val=888ÿÿÿ
+	}
+	CaLastState = CaState;          						//updates the previous state of the outputA with the current state
+	CbLastState = CbState;									//updates the previous state of the outputB with the current state
 }
 
 void senseADC (void){
@@ -726,10 +727,10 @@ void getI (void){
 
 void Print_Power (void){
 
-	Watts = ((int)(v_sense_avg*100) * (int)(i_sense_avg*100)) / 100;	//calculate power
-	if (Watts != LastWatts){							//if the previous and the current state of the outputA are different, that means a Pulse has occurred
-		LastWatts = Watts;								//updates the previous state of the watts with the current state
-		printf("Watts.val=%d%c%c%c",Watts,255,255,255);	//prints voltage to screen	Watts.val=888ÿÿÿ
+	if (VaState != VaLastState || CaState != CaLastState){					//if the previous and the current state of the outputA are different, that means a Pulse has occurred
+		Watts = ((int)(v_sense_avg*100) * (int)(i_sense_avg*100)) / 100;	//calculate power
+		LastWatts = Watts;													//updates the previous state of the watts with the current state
+		printf("Watts.val=%d%c%c%c",Watts,255,255,255);						//prints voltage to screen	Watts.val=888ÿÿÿ
 	}
 	return;
 }
@@ -827,14 +828,14 @@ void max_trans(void){
 	int ResetOn  = HAL_GPIO_ReadPin(Max_transient_Reset_ON_GPIO_Port,Max_transient_Reset_ON_Pin);	//read input from PB0 Reads the "current" state of the button
 	int ResetOff = HAL_GPIO_ReadPin(Max_transient_Reset_OFF_GPIO_Port,Max_transient_Reset_OFF_Pin);	//read input from PB1 Reads the "current" state of the button
 
-	if (ResetOn == 0 && ResetOff != 0){										//if button has been pressed once
+	if (ResetOn > ResetOff){										//if button has been pressed once
 		if ((int)(i_sense_avg*100.0)>= max_trans_current){					//if the previous and the current state of the outputA are different, that means a Pulse has occurred
 			max_trans_current = (int)(i_sense_avg*100.0);					//updates the previous state of the average current sense with the current state
 			printf("Trans.val=%d%c%c%c",max_trans_current,255,255,255);		//prints Maximum Current Transient to screen will have to calibrate and multiply by 100
 			printf("TransON.val=%d%c%c%c",1,255,255,255);					//prints Maximum Current Transient is reading to screen.
 		}
 	}
-	else if(ResetOn != 0 && ResetOff == 0){									//if button has been pressed twice
+	else if(ResetOn < ResetOff){									//if button has been pressed twice
 		printf("Trans.val=%d%c%c%c",max_trans_current,255,255,255);			//prints Maximum Current Transient to screen will have to calibrate and multiply by 100
 		printf("TransON.val=%d%c%c%c",0,255,255,255);						//prints Maximum Current Transient is not reading to screen.
 	}
