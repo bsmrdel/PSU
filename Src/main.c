@@ -206,7 +206,7 @@ int main(void)
 	{
 
 		//User Interface
-		//OutputEnable(error_voltage,error_current,error_temp);	//Output enable function, error parameters can be used to send error signal to disable output
+		OutputEnable(error_voltage,error_current,error_temp);	//Output enable function, error parameters can be used to send error signal to disable output
 		getVoltage_limit();
 		getCurrent_limit();
 
@@ -691,7 +691,7 @@ void getV (void){
 	if (v_sense_avg_int != Last_v_sense_avg){			//if the previous and the current state of the outputA are different, that means a Pulse has occurred
 		Last_v_sense_avg = v_sense_avg_int;				//updates the previous state of the average v sense with the current state
 		printf("VoltageO.val=%d%c%c%c",v_sense_avg_int,255,255,255);	//prints voltage to screen	VoltageO.val=888ÿÿÿ will have to calibrate and multiply by 100 and change to int
-		if (v_sense_avg_int > 3200){						//if voltage is above safe value, return error
+		if (v_sense_avg_int > 3200){					//if voltage is above safe value, return error
 			error_voltage = 1;							//set error as 1 to turn off outputs
 		}
 		else {
@@ -743,13 +743,13 @@ void getTemp (void){
 	if (farh_average != Lastfarh){											//if the previous and the current state of the temperature are different, that means a Pulse has occurred
 		Lastfarh = farh_average;											//updates the previous state of the temperature with the current state
 		printf("Temp.val=%d%c%c%c",(int)(farh_average*100)/10,255,255,255);	//prints temperature to screen	temp.val=888ÿÿÿ
-		if(farh_average >= 100 && error_temp == 0){												//if temperature rises above 100 F, alert user.
+		if((farh_average >= 100 || farh_average < 0) && error_temp == 0){	//if temperature rises above 100 F, alert user.
 			error_temp = 1;													//an error has occurred
 			printf("Temp.pco=%d%c%c%c",63488,255,255,255);					//turns temp number red on screen button.val=888ÿÿÿ
 			printf("temptxt.pco=%d%c%c%c",63488,255,255,255);				//turns temp text red on screen button.val=888ÿÿÿ
 			printf("ftxt.pco=%d%c%c%c",63488,255,255,255);					//turns F text red on screen button.val=888ÿÿÿ
 		}
-		else if(farh_average < 100 && error_temp == 1){					//if nothing is wrong and something was wrong before
+		else if(farh_average < 100 && farh_average > 0 && error_temp == 1){	//if nothing is wrong and something was wrong before
 			error_temp = 0;													//an error has not occurred
 			printf("Temp.pco=%d%c%c%c",65535,255,255,255);					//turns temp number black on screen Temp.pco=0ÿÿÿ
 			printf("temptxt.pco=%d%c%c%c",65535,255,255,255);				//turns temp text black on screen tempxt.pco=0ÿÿÿ
