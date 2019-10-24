@@ -59,6 +59,7 @@ ADC_HandleTypeDef hadc;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim15;
 
 /* USER CODE BEGIN PV */
 
@@ -93,6 +94,7 @@ int LastWatts = 0;
 int Last_v_sense_avg = 0;
 int Last_i_sense_avg = 0;
 int Lastfarh = 0;
+int maxreset = 0;
 
 int raw_tempsense_value = 0; //12b value from adc for TempSense
 float farh = 0;
@@ -115,6 +117,10 @@ float v_lim = 0;           //user selected voltage limit @elliott made changes
 float v_sense_avg = 0;		//moving average val of v_sense
 float i_sense_avg = 0;		//moving average val of i_sense
 float farh_average = 0;
+
+
+int v_sense_avg_int = 0;
+int i_sense_avg_int = 0;
 //int cv_cc = 1;				//constant voltage = 1, constant current = 0 (modes of operation)
 int cvcc_flag = 0;
 
@@ -131,6 +137,7 @@ static void MX_GPIO_Init(void);
 static void MX_ADC_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_TIM15_Init(void);
 /* USER CODE BEGIN PFP */
 //User Control
 
@@ -138,6 +145,7 @@ void OutputEnable(int error_voltage, int error_current, int error_temp);
 void getVoltage_limit(void);
 void getCurrent_limit(void);
 void serial_init(void);
+void printtoscreen(void);
 
 
 static float approxMovingAvg(float avg, float new_sample);
@@ -155,6 +163,18 @@ void PIDsetBuckPWM();
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
+
+	if( htim -> Instance ==TIM15){
+		HAL_GPIO_TogglePin(LD3_GPIO_Port,LD3_Pin);
+		printtoscreen();
+
+	}
+}
+
+
+
 /* USER CODE END 0 */
 
 /**
@@ -187,10 +207,12 @@ int main(void)
 	MX_ADC_Init();
 	MX_TIM1_Init();
 	MX_TIM2_Init();
+	MX_TIM15_Init();
 	/* USER CODE BEGIN 2 */
 
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1); //Start PWM for Buck
 	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1); //Start PWM for FAN
+	HAL_TIM_Base_Start_IT(&htim15);           //Start Interrupt Timer for 15
 
 	printf("VoltageL.val=%d%c%c%c",0,255,255,255);		//prints voltage to screen	VoltageL.val=0ÿÿÿ
 	printf("CurrentL.val=%d%c%c%c",0,255,255,255);		//prints voltage to screen	VoltageL.val=0ÿÿÿ
@@ -226,6 +248,7 @@ int main(void)
 		getTemp();
 		max_trans();  		//Checks and displays max transient current when OE is pressed.
 		FanPWM();
+
 
 		/* USER CODE END WHILE */
 
@@ -462,6 +485,52 @@ static void MX_TIM2_Init(void)
 }
 
 /**
+ * @brief TIM15 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_TIM15_Init(void)
+{
+
+	/* USER CODE BEGIN TIM15_Init 0 */
+
+	/* USER CODE END TIM15_Init 0 */
+
+	TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+	TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+	/* USER CODE BEGIN TIM15_Init 1 */
+
+	/* USER CODE END TIM15_Init 1 */
+	htim15.Instance = TIM15;
+	htim15.Init.Prescaler = 48000;
+	htim15.Init.CounterMode = TIM_COUNTERMODE_UP;
+	htim15.Init.Period = 200-1;
+	htim15.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+	htim15.Init.RepetitionCounter = 0;
+	htim15.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+	if (HAL_TIM_Base_Init(&htim15) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+	if (HAL_TIM_ConfigClockSource(&htim15, &sClockSourceConfig) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+	sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+	if (HAL_TIMEx_MasterConfigSynchronization(&htim15, &sMasterConfig) != HAL_OK)
+	{
+		Error_Handler();
+	}
+	/* USER CODE BEGIN TIM15_Init 2 */
+
+	/* USER CODE END TIM15_Init 2 */
+
+}
+
+/**
  * @brief GPIO Initialization Function
  * @param None
  * @retval None
@@ -585,14 +654,14 @@ void getVoltage_limit(void){
 		if (User_Voltage_limit > 3200) {       				//our power supply cannot go over 32 V
 			User_Voltage_limit = 3200;         				//don't allow voltage setting above 32 V
 		}
-		printf("VoltageL.val=%d%c%c%c",User_Voltage_limit,255,255,255);	//prints voltage to screen VoltageL.val=888ÿÿÿ
+		//printf("VoltageL.val=%d%c%c%c",User_Voltage_limit,255,255,255);	//prints voltage to screen VoltageL.val=888ÿÿÿ
 	}
 	else if (VbState != VbLastState && VbState > VaState){	//if the previous and the current state of the outputA are different, that means a Pulse has occurred and //if the outputB state is different to the outputA state, that means the encoder is rotating clockwise
 		User_Voltage_limit = User_Voltage_limit - VDecimal;	//increment voltage
 		if (User_Voltage_limit < 0) {       				//our power supply cannot go over 32 V
 			User_Voltage_limit = 0;         				//don't allow voltage setting above 32 V
 		}
-		printf("VoltageL.val=%d%c%c%c",User_Voltage_limit,255,255,255);	//prints voltage to screen VoltageL.val=888ÿÿÿ
+		//printf("VoltageL.val=%d%c%c%c",User_Voltage_limit,255,255,255);	//prints voltage to screen VoltageL.val=888ÿÿÿ
 	}
 	VaLastState = VaState;          						//updates the previous state of the outputA with the current state
 	VbLastState = VbState;									//updates the previous state of the outputB with the current state
@@ -645,14 +714,14 @@ void getCurrent_limit(void){
 		if (User_Current_limit > 3200) {       				//our power supply cannot go over 32 V
 			User_Current_limit = 3200;         				//don't allow voltage setting above 32 V
 		}
-		printf("CurrentL.val=%d%c%c%c",User_Current_limit,255,255,255);	//prints voltage to screen VoltageL.val=888ÿÿÿ
+		//printf("CurrentL.val=%d%c%c%c",User_Current_limit,255,255,255);	//prints voltage to screen VoltageL.val=888ÿÿÿ
 	}
 	else if (CbState != CbLastState && CbState > CaState){	//if the previous and the current state of the outputA are different, that means a Pulse has occurred and //if the outputB state is different to the outputA state, that means the encoder is rotating clockwise
 		User_Current_limit = User_Current_limit - CDecimal;	//increment voltage
 		if (User_Current_limit < 0) {       				//our power supply cannot go over 32 V
 			User_Current_limit = 0;         				//don't allow voltage setting above 32 V
 		}
-		printf("CurrentL.val=%d%c%c%c",User_Current_limit,255,255,255);	//prints voltage to screen VoltageL.val=888ÿÿÿ
+		//printf("CurrentL.val=%d%c%c%c",User_Current_limit,255,255,255);	//prints voltage to screen VoltageL.val=888ÿÿÿ
 	}
 	CaLastState = CaState;          						//updates the previous state of the outputA with the current state
 	CbLastState = CbState;									//updates the previous state of the outputB with the current state
@@ -686,18 +755,18 @@ void getV (void){
 	voltage = percent_voltage * 3;						//0-3V ADC signal
 	v_sense = voltage / VOLT_DIV_FACTOR;				//0-50V value
 	v_sense_avg = approxMovingAvg(v_sense_avg, v_sense);//take average
-	int v_sense_avg_int = (int)(v_sense_avg*100);		//make variable compatible with screen
+	v_sense_avg_int = (int)(v_sense_avg*100);		//make variable compatible with screen
 
-	if (v_sense_avg_int != Last_v_sense_avg){			//if the previous and the current state of the outputA are different, that means a Pulse has occurred
-		Last_v_sense_avg = v_sense_avg_int;				//updates the previous state of the average v sense with the current state
-		printf("VoltageO.val=%d%c%c%c",v_sense_avg_int,255,255,255);	//prints voltage to screen	VoltageO.val=888ÿÿÿ will have to calibrate and multiply by 100 and change to int
-		if (v_sense_avg_int > 3200){					//if voltage is above safe value, return error
-			error_voltage = 1;							//set error as 1 to turn off outputs
-		}
-		else {
-			error_voltage = 0;							//set error to 0 if nothing is wrong
-		}
+	//	if (v_sense_avg_int != Last_v_sense_avg){			//if the previous and the current state of the outputA are different, that means a Pulse has occurred
+	//		Last_v_sense_avg = v_sense_avg_int;				//updates the previous state of the average v sense with the current state
+	//		printf("VoltageO.val=%d%c%c%c",v_sense_avg_int,255,255,255);	//prints voltage to screen	VoltageO.val=888ÿÿÿ will have to calibrate and multiply by 100 and change to int
+	if (v_sense_avg_int > 3200){					//if voltage is above safe value, return error
+		error_voltage = 1;							//set error as 1 to turn off outputs
 	}
+	else {
+		error_voltage = 0;							//set error to 0 if nothing is wrong
+	}
+	//}
 	return;
 }
 
@@ -710,28 +779,39 @@ void getI (void){
 	current = CURR_REF - (percent_current * 3);			//0-3V ADC signal
 	i_sense = (current / CURR_DIV_FACTOR) + CURR_OFFSET;//0-3A value
 	i_sense_avg = approxMovingAvg(i_sense_avg, i_sense);//take average
-	int i_sense_avg_int = (int)(i_sense_avg*100);		//make variable compatible with screen
+	i_sense_avg_int = (int)(i_sense_avg*100);		//make variable compatible with screen
 
-	if (i_sense_avg_int != Last_i_sense_avg){			//if the previous and the current state of the outputA are different, that means a Pulse has occurred
-		Last_i_sense_avg = i_sense_avg_int;				//updates the previous state of the average current sense with the current state
-		printf("CurrentO.val=%d%c%c%c",i_sense_avg_int,255,255,255);	//prints current to screen CurrentO.val=888ÿÿÿ	will have to calibrate and multiply by 100
-		if (i_sense_avg_int > 300){						//if voltage is above safe value, return error
-			error_current = 1;							//set error as 1 to turn off outputs
-		}
-		else {
-			error_current = 0;							//set error to 0 if nothing is wrong
-		}
+	//	if (i_sense_avg_int != Last_i_sense_avg){			//if the previous and the current state of the outputA are different, that means a Pulse has occurred
+	//		Last_i_sense_avg = i_sense_avg_int;				//updates the previous state of the average current sense with the current state
+	//		printf("CurrentO.val=%d%c%c%c",i_sense_avg_int,255,255,255);	//prints current to screen CurrentO.val=888ÿÿÿ	will have to calibrate and multiply by 100
+	if (i_sense_avg_int > 300){						//if voltage is above safe value, return error
+		error_current = 1;							//set error as 1 to turn off outputs
 	}
+	else {
+		error_current = 0;							//set error to 0 if nothing is wrong
+	}
+	//}
 	return;
 }
 
 void Print_Power (void){
 
-	if (VaState != VaLastState || CaState != CaLastState){					//if the previous and the current state of the outputA are different, that means a Pulse has occurred
-		Watts = ((int)(v_sense_avg*100) * (int)(i_sense_avg*100)) / 100;	//calculate power
-		LastWatts = Watts;													//updates the previous state of the watts with the current state
-		printf("Watts.val=%d%c%c%c",Watts,255,255,255);						//prints voltage to screen	Watts.val=888ÿÿÿ
-	}
+	//if (VaState != VaLastState || CaState != CaLastState){					//if the previous and the current state of the outputA are different, that means a Pulse has occurred
+	Watts = v_sense_avg_int * i_sense_avg_int / 100;	//calculate power
+	//	LastWatts = Watts;													//updates the previous state of the watts with the current state
+	//	printf("Watts.val=%d%c%c%c",Watts,255,255,255);						//prints voltage to screen	Watts.val=888ÿÿÿ
+	//}
+	return;
+}
+
+void printtoscreen(void){
+
+	printf("VoltageL.val=%d%c%c%c",User_Voltage_limit,255,255,255);
+	printf("CurrentL.val=%d%c%c%c",User_Current_limit,255,255,255);
+	printf("VoltageO.val=%d%c%c%c",v_sense_avg_int,255,255,255);
+	printf("CurrentO.val=%d%c%c%c",i_sense_avg_int,255,255,255);
+	printf("Watts.val=%d%c%c%c",Watts,255,255,255);
+	printf("Temp.val=%d%c%c%c",(int)(farh_average*100)/10,255,255,255);	//prints temperature to screen	temp.val=888ÿÿÿ
 	return;
 }
 
@@ -740,22 +820,22 @@ void getTemp (void){
 	farh = ((raw_tempsense_value/4096.0)*3000.0)/10.0-30; 					//calculate the farenheit using 5V
 	farh_average = approxMovingAvg(farh_average,farh);						//finds average of temperature
 
-	if (farh_average != Lastfarh){											//if the previous and the current state of the temperature are different, that means a Pulse has occurred
-		Lastfarh = farh_average;											//updates the previous state of the temperature with the current state
-		printf("Temp.val=%d%c%c%c",(int)(farh_average*100)/10,255,255,255);	//prints temperature to screen	temp.val=888ÿÿÿ
-		if((farh_average >= 100 || farh_average < 0) && error_temp == 0){	//if temperature rises above 100 F, alert user.
-			error_temp = 1;													//an error has occurred
-			printf("Temp.pco=%d%c%c%c",63488,255,255,255);					//turns temp number red on screen button.val=888ÿÿÿ
-			printf("temptxt.pco=%d%c%c%c",63488,255,255,255);				//turns temp text red on screen button.val=888ÿÿÿ
-			printf("ftxt.pco=%d%c%c%c",63488,255,255,255);					//turns F text red on screen button.val=888ÿÿÿ
-		}
-		else if(farh_average < 100 && farh_average > 0 && error_temp == 1){	//if nothing is wrong and something was wrong before
-			error_temp = 0;													//an error has not occurred
-			printf("Temp.pco=%d%c%c%c",65535,255,255,255);					//turns temp number black on screen Temp.pco=0ÿÿÿ
-			printf("temptxt.pco=%d%c%c%c",65535,255,255,255);				//turns temp text black on screen tempxt.pco=0ÿÿÿ
-			printf("ftxt.pco=%d%c%c%c",65535,255,255,255);					//turns F text black on screen ftxt.pco=0ÿÿÿ
-		}
+	//if (farh_average != Lastfarh){											//if the previous and the current state of the temperature are different, that means a Pulse has occurred
+	//Lastfarh = farh_average;											//updates the previous state of the temperature with the current state
+	//printf("Temp.val=%d%c%c%c",(int)(farh_average*100)/10,255,255,255);	//prints temperature to screen	temp.val=888ÿÿÿ
+	if((farh_average >= 100 || farh_average < 0) && error_temp == 0){	//if temperature rises above 100 F, alert user.
+		error_temp = 1;													//an error has occurred
+		printf("Temp.pco=%d%c%c%c",63488,255,255,255);					//turns temp number red on screen button.val=888ÿÿÿ
+		printf("temptxt.pco=%d%c%c%c",63488,255,255,255);				//turns temp text red on screen button.val=888ÿÿÿ
+		printf("ftxt.pco=%d%c%c%c",63488,255,255,255);					//turns F text red on screen button.val=888ÿÿÿ
 	}
+	else if(farh_average < 100 && farh_average > 0 && error_temp == 1){	//if nothing is wrong and something was wrong before
+		error_temp = 0;													//an error has not occurred
+		printf("Temp.pco=%d%c%c%c",65535,255,255,255);					//turns temp number black on screen Temp.pco=0ÿÿÿ
+		printf("temptxt.pco=%d%c%c%c",65535,255,255,255);				//turns temp text black on screen tempxt.pco=0ÿÿÿ
+		printf("ftxt.pco=%d%c%c%c",65535,255,255,255);					//turns F text black on screen ftxt.pco=0ÿÿÿ
+	}
+	//}
 	return;
 }
 
@@ -829,15 +909,18 @@ void max_trans(void){
 	int ResetOff = HAL_GPIO_ReadPin(Max_transient_Reset_OFF_GPIO_Port,Max_transient_Reset_OFF_Pin);	//read input from PB1 Reads the "current" state of the button
 
 	if (ResetOn > ResetOff){										//if button has been pressed once
-		if ((int)(i_sense_avg*100.0)>= max_trans_current){					//if the previous and the current state of the outputA are different, that means a Pulse has occurred
-			max_trans_current = (int)(i_sense_avg*100.0);					//updates the previous state of the average current sense with the current state
+		if (i_sense_avg_int > max_trans_current){					//if the previous and the current state of the outputA are different, that means a Pulse has occurred
+			max_trans_current = i_sense_avg_int;					//updates the previous state of the average current sense with the current state
 			printf("Trans.val=%d%c%c%c",max_trans_current,255,255,255);		//prints Maximum Current Transient to screen will have to calibrate and multiply by 100
 			printf("TransON.val=%d%c%c%c",1,255,255,255);					//prints Maximum Current Transient is reading to screen.
+			maxreset = 1;
 		}
 	}
-	else if(ResetOn < ResetOff){									//if button has been pressed twice
+	else if(ResetOn < ResetOff && maxreset == 1){									//if button has been pressed twice
 		printf("Trans.val=%d%c%c%c",max_trans_current,255,255,255);			//prints Maximum Current Transient to screen will have to calibrate and multiply by 100
 		printf("TransON.val=%d%c%c%c",0,255,255,255);						//prints Maximum Current Transient is not reading to screen.
+		max_trans_current = 0;
+		maxreset = 0;
 	}
 }
 
